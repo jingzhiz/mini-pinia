@@ -1,6 +1,5 @@
 import { ref, effectScope } from 'vue'
-
-const piniaSymbol = Symbol('pinia')
+import { piniaSymbol } from './rootStore'
 
 export function createPinia() {
   const scope = effectScope()
@@ -12,8 +11,6 @@ export function createPinia() {
     _e: scope, // 用来停止所有状态
     state, // 用来存储每个 store 的 state
     install(app) {
-      console.log(app)
-
       // 通过 provide 让所有的 store 获取这个 pinia 对象
       app.provide(piniaSymbol, pinia) // 所有组件都可以通过 app.inject(piniaSymbol) 注入 pinia
 
