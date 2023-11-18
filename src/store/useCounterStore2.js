@@ -10,9 +10,14 @@ export const useCounterStore2 = defineStore('counter2', () => {
     count.value += payload
   }
 
+  const $reset = () => {
+    count.value = 100
+  }
+
   return {
     count,
     doubleCount,
-    increment
+    increment,
+    $reset
   }
 })
