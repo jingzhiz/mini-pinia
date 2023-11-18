@@ -1,6 +1,7 @@
 import { getCurrentInstance, isRef, isReactive, toRefs, reactive, computed, watch, inject, effectScope } from 'vue'
 import { piniaSymbol } from './rootStore'
 import { addSubscribe, triggerSubscribe } from './subscribe'
+import { activePinia, setActivePinia } from './createPinia'
 
 function isComputed(value) {
   return !!(isRef(value) && value.effect)
@@ -38,6 +39,7 @@ function createSetupStore(id, setup, pinia, isOption) {
         partialStateOrMutation(pinia.state.value[id])
       }
     },
+    // 监听 state 变化
     $subscribe(callback, options) {
       scope.run(() => {
         watch(
@@ -49,7 +51,13 @@ function createSetupStore(id, setup, pinia, isOption) {
         )
       })
     },
-    $onAction: addSubscribe.bind(null, actionSubscribers)
+    // 监听 action 执行
+    $onAction: addSubscribe.bind(null, actionSubscribers),
+    $dispose() {
+      scope.stop() // 清除响应式
+      actionSubscribers = [] // 取消订阅
+      pinia._s.delete(id)
+    }
   }
 
   const store = reactive(partialStore)
@@ -69,6 +77,7 @@ function createSetupStore(id, setup, pinia, isOption) {
 
   function wrapAction(name, action) {
     return function() {
+      // 收集 after 和 onError 回调
       const afterCallbackList = []
       const onErrorCallbackList = []
       function after(callback) {
@@ -81,11 +90,13 @@ function createSetupStore(id, setup, pinia, isOption) {
 
       let result
       try {
+        // 执行 action
         result = action.apply(store, arguments)
       } catch (e) {
         triggerSubscribe(onErrorCallbackList, e)
       }
 
+      // 如果是 Promise 则返回 Promise 回调之后的结果
       if (result instanceof Promise) {
         return result.then(
           (res) => {
@@ -103,6 +114,7 @@ function createSetupStore(id, setup, pinia, isOption) {
       return result
     }
   }
+
   for(let key in setupStore) {
     const prop = setupStore[key]
     // 处理 actions
@@ -123,6 +135,23 @@ function createSetupStore(id, setup, pinia, isOption) {
   pinia._s.set(id, store)
 
   Object.assign(store, setupStore)
+
+  store.$id = id
+  // 通过 $state 访问 state, 并且可以替换整个 state
+  Object.defineProperty(store, '$state', {
+    get() {
+      return pinia.state.value[id]
+    },
+    set(state) {
+      partialStore.$patch($state => Object.assign($state, state))
+    }
+  })
+
+  // 执行被注册的插件
+  pinia._p.forEach(plugin => {
+    // 将插件的返回值合并到 store 上
+    Object.assign(store, scope.run(() => plugin({store})))
+  })
 
   return store
 }
@@ -161,7 +190,6 @@ function createOptionsStore(id, options, pinia) {
   }
 }
 
-
 export function defineStore(idOrOptions, setup) {
   let id
   let options
@@ -182,8 +210,14 @@ export function defineStore(idOrOptions, setup) {
     // 获取当前的组件实例
     const instance = getCurrentInstance()
     // 只有当前是在组件内才允许注入数据
-    const pinia = instance && inject(piniaSymbol)
-    
+    let pinia = instance && inject(piniaSymbol)
+
+    // 如果当前不是在组件中使用的处理
+    if (pinia) {
+      setActivePinia(pinia)
+    }
+    pinia = activePinia
+
     // 如果是第一次使用则创建 store，建立映射关系
     if (!pinia._s.has(id)) {
       if (isSetupStore) {
